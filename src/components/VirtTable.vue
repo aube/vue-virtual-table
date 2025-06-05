@@ -13,7 +13,8 @@ type Item = {
 type ItemsResp = {
   items: Item[];
   length: number;
-  lastindex?: number;
+  lastIndex?: number;
+  firstEntry?: number;
 };
 
 const SIZE = 20;
@@ -23,18 +24,21 @@ const data = ref<Item[]>([]);
 const filter = ref("");
 
 let page = 1;
-let lastindex = 0;
+let lastIndex = 0;
+let firstEntry = 0;
 
-const loadItemsFiltered = async () => {
+const loadItemsFiltered = async (filterUpdate: boolean) => {
+  const from = filterUpdate ? firstEntry : lastIndex;
   const response = await get<ItemsResp>(
-    "/items/" + filter.value + "?size=" + SIZE + "&lastindex=" + lastindex,
+    "/items/" + filter.value + "?size=" + SIZE + "&from=" + from,
   );
   if (response.error) {
     console.error(response.error);
     return;
   }
   data.value.push(...(response.data?.items || []).filter((i) => i));
-  lastindex = response.data?.lastindex || 0;
+  firstEntry = firstEntry ? firstEntry : response.data?.firstEntry || 0;
+  lastIndex = response.data?.lastIndex || 0;
 };
 
 const loadItems = async () => {
@@ -53,7 +57,7 @@ const loadMore = async () => {
   if (!canLoadMore()) return;
 
   if (filter.value) {
-    await loadItemsFiltered();
+    await loadItemsFiltered(false);
   } else {
     await loadItems();
   }
@@ -77,11 +81,12 @@ async function markItem(id: number) {
 
 watch(filter, (newVal: string, oldVal: string) => {
   if (!newVal.startsWith(oldVal)) {
-    lastindex = 0;
+    lastIndex = 0;
+    firstEntry = 0;
   }
   page = 1;
   data.value = [];
-  loadMore();
+  loadItemsFiltered(true);
 });
 
 interface draggableResult {
