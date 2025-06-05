@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useInfiniteScroll } from "@vueuse/core";
-import { ref, nextTick, onMounted, useTemplateRef } from "vue";
+import { ref, nextTick, watch, onMounted, useTemplateRef } from "vue";
 import { useSortable } from "@vueuse/integrations/useSortable";
 import { useApi } from "@/services/api";
 
@@ -75,12 +75,14 @@ async function markItem(id: number) {
   }
 }
 
-async function filterItems() {
+watch(filter, (newVal: string, oldVal: string) => {
+  if (!newVal.startsWith(oldVal)) {
+    lastindex = 0;
+  }
   page = 1;
-  lastindex = 0;
   data.value = [];
   loadMore();
-}
+});
 
 interface draggableResult {
   oldIndex: number;
@@ -131,7 +133,6 @@ onMounted(() => {
       v-model="filter"
       placeholder="filter"
       class="bg-gray-500/5 rounded p-2"
-      @input="filterItems"
     />
   </div>
 
