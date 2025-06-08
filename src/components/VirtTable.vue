@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, nextTick } from "vue";
+import { ref, watch, onMounted } from "vue";
 import { useInfiniteScroll } from "@vueuse/core";
 import { useSortable } from "@vueuse/integrations/useSortable";
 import { useApi } from "@/services/api";
@@ -33,7 +33,7 @@ interface DraggableResult {
 const PAGE_SIZE = 20;
 
 // Composables
-const { get, post, loading } = useApi();
+const { get, post, put, loading } = useApi();
 
 // Refs
 const itemsListContainer = ref<HTMLElement>();
@@ -110,6 +110,27 @@ const markItem = async (id: number) => {
   }
 };
 
+const init = async () => {
+  await fetchItems();
+};
+
+const resetAll = async () => {
+  const response = await put<undefined>(`/items`, []);
+
+  if (response?.error) {
+    console.error("Error fetching filtered items:", response.error);
+    return;
+  }
+
+  filter.value = "";
+  currentPage.value = 1;
+  lastEntryIdx.value = 0;
+  firstEntryIdx.value = 0;
+  items.value = [];
+
+  init();
+};
+
 const moveItem = async ({ oldIndex, newIndex }: DraggableResult) => {
   if (oldIndex === newIndex) return;
 
@@ -148,7 +169,7 @@ const moveItem = async ({ oldIndex, newIndex }: DraggableResult) => {
 const canLoadMore = () => !loading.value;
 
 useInfiniteScroll(itemsListContainer, () => fetchItems(false), {
-  distance: 100,
+  distance: 0,
   canLoadMore,
 });
 
@@ -177,15 +198,7 @@ watch(filter, (newValue, oldValue) => {
 });
 
 onMounted(async () => {
-  await fetchItems();
-  await nextTick();
-  if (
-    itemsListContainer.value &&
-    itemsListContainer.value?.scrollHeight <=
-      itemsListContainer.value?.offsetHeight
-  ) {
-    await fetchItems();
-  }
+  init();
 });
 </script>
 
@@ -200,7 +213,8 @@ onMounted(async () => {
 
   <div
     ref="itemsListContainer"
-    class="flex flex-col gap-2 p-2 h-[80vh] w-[320px] overflow-y-auto bg-gray-500/5 rounded"
+    class="gap-2 p-2 h-[80vh] w-[320px] overflow-y-auto bg-gray-500/5 rounded"
+    style="max-height: calc(var(--spacing) * 15 * 19)"
   >
     <div
       v-for="item in items"
@@ -222,4 +236,12 @@ onMounted(async () => {
       </span>
     </div>
   </div>
+
+  <button
+    type="button"
+    class="!mt-3 text-xs py-2.5 px-5 me-2 mb-2 font-medium text-gray-900 focus:outline-none bg-white rounded-lg border border-gray-200 hover:bg-gray-100 hover:text-blue-700 focus:z-10 focus:ring-4 focus:ring-gray-100 dark:focus:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600 dark:hover:text-white dark:hover:bg-gray-700"
+    @click="resetAll"
+  >
+    resetAll
+  </button>
 </template>
