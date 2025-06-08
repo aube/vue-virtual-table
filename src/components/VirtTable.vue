@@ -122,13 +122,10 @@ const resetAll = async () => {
     return;
   }
 
-  filter.value = "";
   currentPage.value = 1;
   lastEntryIdx.value = 0;
   firstEntryIdx.value = 0;
-  items.value = [];
-
-  init();
+  filter.value = "";
 };
 
 const moveItem = async ({ oldIndex, newIndex }: DraggableResult) => {
