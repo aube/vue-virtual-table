@@ -1,157 +1,223 @@
 <script setup lang="ts">
+import { ref, watch, onMounted, nextTick } from "vue";
 import { useInfiniteScroll } from "@vueuse/core";
-import { ref, nextTick, watch, onMounted, useTemplateRef } from "vue";
 import { useSortable } from "@vueuse/integrations/useSortable";
 import { useApi } from "@/services/api";
 
-type Item = {
+// Types
+interface Item {
   id: number;
   content: string;
   mark: boolean;
-};
-
-type ItemsResp = {
-  items: Item[];
-  length: number;
-  lastIndex?: number;
-  firstEntry?: number;
-};
-
-const SIZE = 20;
-const { get, post, loading } = useApi();
-const el = useTemplateRef<HTMLElement>("el");
-const data = ref<Item[]>([]);
-const filter = ref("");
-
-let page = 1;
-let lastIndex = 0;
-let firstEntry = 0;
-
-const loadItemsFiltered = async (filterUpdate: boolean) => {
-  const from = filterUpdate ? firstEntry : lastIndex;
-  const response = await get<ItemsResp>(
-    "/items/" + filter.value + "?size=" + SIZE + "&from=" + from,
-  );
-  if (response.error) {
-    console.error(response.error);
-    return;
-  }
-  data.value.push(...(response.data?.items || []).filter((i) => i));
-  firstEntry = firstEntry ? firstEntry : response.data?.firstEntry || 0;
-  lastIndex = response.data?.lastIndex || 0;
-};
-
-const loadItems = async () => {
-  const response = await get<ItemsResp>(
-    "/items?size=" + SIZE + "&page=" + page,
-  );
-  if (response.error) {
-    console.error(response.error);
-    return;
-  }
-  data.value.push(...(response.data?.items || []).filter((i) => i));
-  page++;
-};
-
-const loadMore = async () => {
-  if (!canLoadMore()) return;
-
-  if (filter.value) {
-    await loadItemsFiltered(false);
-  } else {
-    await loadItems();
-  }
-};
-
-const canLoadMore = () => {
-  return !loading.value;
-};
-
-useInfiniteScroll(el, loadMore, {
-  distance: 100,
-  canLoadMore,
-});
-
-async function markItem(id: number) {
-  const response = await post<undefined>("/items/" + String(id) + "/mark", {});
-  if (response.error) {
-    console.error(response.error);
-  }
+  decoratedContent?: {
+    zeroes: string;
+    num: string;
+  };
 }
 
-watch(filter, (newVal: string, oldVal: string) => {
-  if (!newVal.startsWith(oldVal)) {
-    lastIndex = 0;
-    firstEntry = 0;
-  }
-  page = 1;
-  data.value = [];
-  loadItemsFiltered(true);
-});
+interface ItemsResponse {
+  items: Item[];
+  length: number;
+  page?: number;
+  size?: number;
+  lastEntry?: number;
+  firstEntry?: number;
+}
 
-interface draggableResult {
+interface DraggableResult {
   oldIndex: number;
   newIndex: number;
 }
 
-async function moveItem(result: draggableResult) {
-  const { oldIndex: from, newIndex: to } = result;
-  const movedItem = data.value[from];
+// Constants
+const PAGE_SIZE = 20;
 
-  const response = await post<undefined>(
-    "/items/" + String(movedItem.id) + "/sort",
-    { shift: to - from },
+// Composables
+const { get, post, loading } = useApi();
+
+// Refs
+const itemsListContainer = ref<HTMLElement>();
+const items = ref<Item[]>([]);
+const filter = ref("");
+const currentPage = ref(1);
+const lastEntryIdx = ref(0);
+const firstEntryIdx = ref(0);
+
+// Data fetching functions
+const fetchItems = async (isFilterUpdate: boolean = false) => {
+  if (filter.value) {
+    await fetchFilteredItems(isFilterUpdate);
+  } else {
+    await fetchPaginatedItems();
+  }
+};
+
+const fetchPaginatedItems = async () => {
+  const response = await get<ItemsResponse>(
+    `/items?size=${PAGE_SIZE}&page=${currentPage.value}`,
   );
 
   if (response.error) {
-    console.error(response.error);
+    console.error("Error fetching items:", response.error);
     return;
   }
 
-  if (from < to) {
-    for (let n = from; n < to; n++) {
-      data.value[n] = data.value[n + 1];
-    }
-  } else if (from > to) {
-    for (let n = from; n > to; n--) {
-      data.value[n] = data.value[n - 1];
-    }
+  appendItems(response.data?.items || []);
+  currentPage.value++;
+};
+
+const fetchFilteredItems = async (isFilterUpdate: boolean) => {
+  const fromId = isFilterUpdate ? firstEntryIdx.value : lastEntryIdx.value;
+  const response = await get<ItemsResponse>(
+    `/items/?size=${PAGE_SIZE}&from=${fromId}&filter=${filter.value}`,
+  );
+
+  if (response.error) {
+    console.error("Error fetching filtered items:", response.error);
+    return;
   }
 
-  data.value[to] = movedItem;
-  await nextTick();
-}
+  const newItems = response.data?.items || [];
+  appendItems(newItems);
 
-useSortable(el, data, {
+  if (isFilterUpdate) {
+    firstEntryIdx.value = response.data?.firstEntry || 0;
+  }
+  lastEntryIdx.value = response.data?.lastEntry || 0;
+};
+
+const itemContentDecoration = (item: Item) => {
+  const rexp = new RegExp(/^(0+)(.+)/g);
+  const matches = [...item.content.matchAll(rexp)];
+  return {
+    ...item,
+    decoratedContent: {
+      zeroes: matches[0][1],
+      num: matches[0][2],
+    },
+  };
+};
+
+const appendItems = (newItems: Item[]) => {
+  items.value.push(...newItems.filter(Boolean).map(itemContentDecoration));
+};
+
+// Item actions
+const markItem = async (id: number) => {
+  const response = await post<undefined>(`/items/${id}/mark`, {});
+  if (response.error) {
+    console.error("Error marking item:", response.error);
+  }
+};
+
+const moveItem = async ({ oldIndex, newIndex }: DraggableResult) => {
+  if (oldIndex === newIndex) return;
+
+  const movedItem = items.value[oldIndex];
+  let requestData = null;
+
+  // Update local array
+  if (oldIndex < newIndex) {
+    for (let i = oldIndex; i < newIndex; i++) {
+      items.value[i] = items.value[i + 1];
+    }
+    requestData = { after: items.value[newIndex - 1].id };
+  } else {
+    for (let i = oldIndex; i > newIndex; i--) {
+      items.value[i] = items.value[i - 1];
+    }
+    requestData = { before: items.value[newIndex + 1].id };
+  }
+
+  items.value[newIndex] = movedItem;
+
+  // Send API request
+  if (requestData) {
+    const response = await post<undefined>(
+      `/items/${movedItem.id}/sort`,
+      requestData,
+    );
+
+    if (response.error) {
+      console.error("Error moving item:", response.error);
+    }
+  }
+};
+
+// Infinite scroll setup
+const canLoadMore = () => !loading.value;
+
+useInfiniteScroll(itemsListContainer, () => fetchItems(false), {
+  distance: 100,
+  canLoadMore,
+});
+
+// Sortable setup
+useSortable(itemsListContainer, items, {
   animation: 150,
   onUpdate: moveItem,
 });
 
-onMounted(() => {
-  loadMore();
+// Watchers
+watch(filter, (newValue, oldValue) => {
+  currentPage.value = 1;
+  items.value = [];
+
+  if (!newValue) {
+    fetchItems();
+    return;
+  }
+
+  if (!newValue.startsWith(oldValue)) {
+    lastEntryIdx.value = 0;
+    firstEntryIdx.value = 0;
+  }
+
+  fetchItems(true);
+});
+
+onMounted(async () => {
+  await fetchItems();
+  await nextTick();
+  if (
+    itemsListContainer.value &&
+    itemsListContainer.value?.scrollHeight <=
+      itemsListContainer.value?.offsetHeight
+  ) {
+    await fetchItems();
+  }
 });
 </script>
 
 <template>
-  <div class="!mb-3">
+  <div class="!mb-3 w-[320px]">
     <input
       v-model="filter"
-      placeholder="filter"
-      class="bg-gray-500/5 rounded p-2"
+      placeholder="Filter items..."
+      class="bg-gray-500/5 rounded p-2 w-full"
     />
   </div>
 
   <div
-    ref="el"
+    ref="itemsListContainer"
     class="flex flex-col gap-2 p-2 h-[80vh] w-[320px] overflow-y-auto bg-gray-500/5 rounded"
   >
     <div
-      v-for="item in data"
+      v-for="item in items"
       :key="item.id"
-      class="h-15 bg-gray-500/5 rounded p-3 flex items-center gap-3"
+      class="h-15 rounded p-3 flex items-center gap-3"
     >
-      <input type="checkbox" v-model="item.mark" @click="markItem(item.id)" />
-      <span>
+      <input
+        type="checkbox"
+        v-model="item.mark"
+        @click="markItem(item.id)"
+        class="cursor-pointer"
+      />
+      <span v-if="item.decoratedContent" class="flex-grow">
+        <span class="opacity-50">{{ item.decoratedContent.zeroes }}</span>
+        <span class="font-black">{{ item.decoratedContent.num }}</span>
+      </span>
+      <span v-else class="flex-grow">
         {{ item.content }}
       </span>
     </div>
